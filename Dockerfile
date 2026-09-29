@@ -2,33 +2,49 @@ FROM node:lts-alpine
 
 WORKDIR /opt/app
 
-RUN apk add --no-cache curl tzdata
+# 安装必要的依赖包
+RUN apk add --no-cache curl tzdata unzip bash
 
-ENV TIME_ZONE=Asia/Shanghai 
-
+ENV TIME_ZONE=Asia/Shanghai
 RUN cp /usr/share/zoneinfo/$TIME_ZONE /etc/localtime && echo $TIME_ZONE > /etc/timezone
 
-# RUN apk del tzdata
-
+# 下载 Sub-Store 及前端资源
 ADD https://github.com/sub-store-org/Sub-Store/releases/latest/download/sub-store.bundle.js /opt/app/sub-store.bundle.js
-
 ADD https://github.com/sub-store-org/Sub-Store-Front-End/releases/latest/download/dist.zip /opt/app/dist.zip
 
-RUN unzip dist.zip; mv dist frontend; rm dist.zip
+RUN unzip -q dist.zip && mv dist frontend && rm -f dist.zip
 
+# 创建 http-meta 目录并下载脚本和配置
+RUN mkdir -p /opt/app/http-meta
 ADD https://github.com/xream/http-meta/releases/latest/download/http-meta.bundle.js /opt/app/http-meta.bundle.js
-
 ADD https://github.com/xream/http-meta/releases/latest/download/tpl.yaml /opt/app/http-meta/tpl.yaml
 
-RUN version=$(curl -s -L --connect-timeout 5 --max-time 10 --retry 2 --retry-delay 0 --retry-max-time 20 'https://github.com/MetaCubeX/mihomo/releases/download/Prerelease-Alpha/version.txt') && \
-  arch=$(arch | sed s/aarch64/arm64/ | sed s/x86_64/amd64-compatible/) && \
-  url="https://github.com/MetaCubeX/mihomo/releases/download/Prerelease-Alpha/mihomo-linux-$arch-$version.gz" && \
-  curl -s -L --connect-timeout 5 --max-time 10 --retry 2 --retry-delay 0 --retry-max-time 20 "$url" -o /opt/app/http-meta/http-meta.gz && \
-  gunzip /opt/app/http-meta/http-meta.gz && \
-  rm -rf /opt/app/http-meta/http-meta.gz
+# 下载 mihomo 内核并重命名赋予执行权限
+RUN set -ex && \
+    version=$(curl -s -L --connect-timeout 5 --max-time 15 --retry 3 'https://github.com/MetaCubeX/mihomo/releases/download/Prerelease-Alpha/version.txt') && \
+    ARCH=$(uname -m) && \
+    case "$ARCH" in \
+      x86_64) mihomo_arch="amd64-compatible" ;; \
+      aarch64|arm64) mihomo_arch="arm64" ;; \
+      *) echo "Unsupported arch: $ARCH" && exit 1 ;; \
+    esac && \
+    url="https://github.com/MetaCubeX/mihomo/releases/download/Prerelease-Alpha/mihomo-linux-$mihomo_arch-$version.gz" && \
+    curl -s -L --connect-timeout 5 --max-time 30 --retry 3 "$url" -o /opt/app/http-meta/mihomo.gz && \
+    gzip -d /opt/app/http-meta/mihomo.gz && \
+    mv /opt/app/http-meta/mihomo /opt/app/http-meta/http-meta && \
+    chmod +x /opt/app/http-meta/http-meta
 
-RUN chmod 777 -R /opt/app
+RUN chmod -R 777 /opt/app
 
-CMD mkdir -p /opt/app/data; cd /opt/app/data; \
-  META_FOLDER=/opt/app/http-meta HOST=:: node /opt/app/http-meta.bundle.js > /opt/app/data/http-meta.log 2>&1 & echo "HTTP-META is running..."; \
-  SUB_STORE_BACKEND_API_HOST=:: SUB_STORE_FRONTEND_HOST=:: SUB_STORE_FRONTEND_PORT=3001 SUB_STORE_FRONTEND_PATH=/opt/app/frontend SUB_STORE_DATA_BASE_PATH=/opt/app/data node /opt/app/sub-store.bundle.js
+# 显式声明暴露的端口
+EXPOSE 3001
+
+# 启动命令：统一使用 0.0.0.0，并将错误输出打印到控制台以方便在平台排查
+CMD mkdir -p /opt/app/data && cd /opt/app/data && \
+    META_FOLDER=/opt/app/http-meta HOST=0.0.0.0 node /opt/app/http-meta.bundle.js & \
+    SUB_STORE_BACKEND_API_HOST=0.0.0.0 \
+    SUB_STORE_FRONTEND_HOST=0.0.0.0 \
+    SUB_STORE_FRONTEND_PORT=3001 \
+    SUB_STORE_DATA_BASE_PATH=/opt/app/data \
+    SUB_STORE_FRONTEND_PATH=/opt/app/frontend \
+    node /opt/app/sub-store.bundle.js
