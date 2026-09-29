@@ -36,15 +36,18 @@ RUN set -ex && \
 
 RUN chmod -R 777 /opt/app
 
-# 显式声明暴露的端口
+# 仅对外暴露 3001（前端服务端口）
 EXPOSE 3001
 
-# 启动命令：统一使用 0.0.0.0，并将错误输出打印到控制台以方便在平台排查
+# 启动配置：
+# 1. http-meta 只监听回环地址 127.0.0.1，避免被平台的端口扫描探针误判为主 Web 进程
+# 2. sub-store 作为主进程监听 0.0.0.0:3001 对外提供健康检查与 Web 服务
 CMD mkdir -p /opt/app/data && cd /opt/app/data && \
-    META_FOLDER=/opt/app/http-meta HOST=0.0.0.0 node /opt/app/http-meta.bundle.js & \
+    META_FOLDER=/opt/app/http-meta HOST=127.0.0.1 node /opt/app/http-meta.bundle.js & \
     SUB_STORE_BACKEND_API_HOST=0.0.0.0 \
     SUB_STORE_FRONTEND_HOST=0.0.0.0 \
     SUB_STORE_FRONTEND_PORT=3001 \
+    SUB_STORE_BACKEND_API_PORT=3000 \
     SUB_STORE_DATA_BASE_PATH=/opt/app/data \
     SUB_STORE_FRONTEND_PATH=/opt/app/frontend \
-    node /opt/app/sub-store.bundle.js
+    exec node /opt/app/sub-store.bundle.js
